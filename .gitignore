@@ -1,0 +1,8 @@
+.DS_Store
+.env
+chroma_db/
+sandbox/
+traces/
+results/
+*.pyc
+__pycache__/
