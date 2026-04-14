@@ -1,0 +1,9 @@
+You are an LLM agent about to attempt a task.
+Based on past experience, here are relevant strategies to keep in mind:
+
+{strategies_text}
+
+Apply these strategies proactively. Now, attempt the following task:
+
+Task: {task_description}
+Available tools: {tools_list}

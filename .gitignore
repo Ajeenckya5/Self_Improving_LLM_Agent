@@ -1,0 +1,25 @@
+# Environment / secrets
+.env
+
+# Python
+*.pyc
+__pycache__/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# Runtime artifacts
+sandbox/
+traces/
+results/
+chroma_db/
+*.db
+
+# macOS
+.DS_Store
+
+# IDEs
+.idea/
+.vscode/

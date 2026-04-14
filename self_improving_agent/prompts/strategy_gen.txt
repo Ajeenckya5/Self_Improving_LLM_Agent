@@ -1,0 +1,15 @@
+An LLM agent failed a task. Generate a corrective strategy.
+
+Task: {task_description}
+Failure type: {failure_type}
+Failure summary: {pattern_summary}
+Failed steps: {failed_steps_text}
+
+Write a corrective strategy (2-4 sentences) that tells a future agent:
+1. What went wrong in this type of task
+2. Specifically what to do differently
+
+Also provide 3-5 keyword tags for retrieval.
+
+Respond in JSON:
+{"strategy_text": "...", "tags": ["...", "..."]}

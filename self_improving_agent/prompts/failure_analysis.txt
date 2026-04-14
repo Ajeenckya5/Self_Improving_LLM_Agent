@@ -1,0 +1,14 @@
+You are analyzing why an LLM agent failed a task.
+
+Task: {task_description}
+
+Execution trace:
+{trace_text}
+
+Identify:
+1. The primary failure type (choose one: repeated_action, circular_loop, context_truncation, incorrect_reasoning, tool_misuse, other)
+2. The specific steps where failure began (list step numbers)
+3. A 2-sentence summary of the failure pattern
+
+Respond in JSON:
+{"failure_type": "...", "failed_steps": [...], "pattern_summary": "..."}
