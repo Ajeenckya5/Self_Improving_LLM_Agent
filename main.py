@@ -86,6 +86,56 @@ def cmd_run(args: argparse.Namespace) -> None:
         print(f"Plots saved to {results_dir}/")
 
 
+def cmd_analyze(args: argparse.Namespace) -> None:
+    """Analyze results and produce all plots. Use --demo for synthetic data."""
+    import pandas as pd
+    from self_improving_agent.evaluation.metrics import (
+        generate_summary_table,
+        plot_success_vs_horizon,
+        plot_failure_mode_dist,
+        plot_cumulative_success,
+    )
+    from self_improving_agent.analysis.recurrence_analysis import (
+        compare_recurrence_across_conditions,
+        plot_failure_recurrence,
+        print_recurrence_summary,
+    )
+
+    results_dir = args.output
+
+    if args.demo:
+        from self_improving_agent.experiments.demo_results import generate_demo_results
+        print("Generating synthetic demo results...")
+        results = generate_demo_results(results_dir=results_dir)
+    else:
+        csv_path = Path(results_dir) / "controlled_results.csv"
+        if not csv_path.exists():
+            print(f"No results found at {csv_path}. Run 'python main.py run' first, or use --demo.")
+            return
+        all_df = pd.read_csv(csv_path)
+        results: dict[str, pd.DataFrame] = {
+            str(label): grp for label, grp in all_df.groupby("label")
+        }
+
+    # Summary table
+    summary = generate_summary_table(results)
+    print("\n--- Summary Table ---")
+    print(summary.to_string(index=False))
+    summary.to_csv(Path(results_dir) / "analysis_summary.csv", index=False)
+
+    # Failure recurrence analysis
+    print_recurrence_summary(results)
+    recur_table = compare_recurrence_across_conditions(results)
+    recur_table.to_csv(Path(results_dir) / "recurrence_analysis.csv", index=False)
+
+    # All plots
+    plot_success_vs_horizon(results, save_path=str(Path(results_dir) / "success_vs_horizon"))
+    plot_failure_mode_dist(results, save_path=str(Path(results_dir) / "failure_mode_dist"))
+    plot_cumulative_success(results, save_path=str(Path(results_dir) / "cumulative_success"))
+    plot_failure_recurrence(results, save_path=str(Path(results_dir) / "failure_recurrence"))
+    print(f"\nAll plots saved to {results_dir}/")
+
+
 def cmd_agentbench(args: argparse.Namespace) -> None:
     """Run AgentBench OS experiment."""
     import subprocess
@@ -131,6 +181,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--dry-run", action="store_true", help="Only run first 3 tasks (for testing)")
     run_p.add_argument("--no-plot", action="store_true", help="Skip generating plots")
 
+    # --- analyze ---
+    ana_p = sub.add_parser("analyze", help="Analyze results and produce all plots")
+    ana_p.add_argument("--output", "-o", default="results", help="Directory with results / for output")
+    ana_p.add_argument("--demo", action="store_true", help="Use synthetic demo data instead of real results")
+
     # --- agentbench ---
     ab_p = sub.add_parser("agentbench", help="Run AgentBench OS experiment")
     ab_p.add_argument("--horizons", nargs="+", type=int, default=None)
@@ -152,6 +207,8 @@ def main() -> None:
 
     if args.cmd == "run":
         cmd_run(args)
+    elif args.cmd == "analyze":
+        cmd_analyze(args)
     elif args.cmd == "agentbench":
         cmd_agentbench(args)
     elif args.cmd == "ablation":
