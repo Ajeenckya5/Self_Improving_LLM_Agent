@@ -184,10 +184,64 @@ class JoinAndAggregateTask(DatabaseTask):
             conn.close()
 
 
+class FilterAndSummarizeTask(DatabaseTask):
+    """Aggregate sales data into a regional summary table."""
+
+    def __init__(self, env_root: str):
+        super().__init__(
+            task_id="db_filter_summarize",
+            description="The 'sales' table has columns id, product, region, amount. "
+                        "Create a new table 'regional_summary' with columns region (TEXT) and total_sales (REAL). "
+                        "Populate it by summing amounts per region from the sales table.",
+            env_root=env_root,
+        )
+
+    def setup(self) -> None:
+        Path(self.env_root).mkdir(parents=True, exist_ok=True)
+        if self.db_path.exists():
+            self.db_path.unlink()
+        conn = sqlite3.connect(str(self.db_path))
+        conn.execute("CREATE TABLE sales (id INTEGER PRIMARY KEY, product TEXT, region TEXT, amount REAL)")
+        rows = [
+            (1, "Widget", "North", 100.0),
+            (2, "Gadget", "South", 200.0),
+            (3, "Widget", "North", 150.0),
+            (4, "Gizmo",  "East",  75.0),
+            (5, "Gadget", "South", 125.0),
+            (6, "Gizmo",  "East",  50.0),
+        ]
+        conn.executemany("INSERT INTO sales VALUES (?,?,?,?)", rows)
+        conn.commit()
+        conn.close()
+
+    def verify(self, env_state: dict[str, Any]) -> TaskResult:
+        if not self.db_path.exists():
+            return TaskResult(success=False, message="Database file not found", details={})
+        conn = sqlite3.connect(str(self.db_path))
+        try:
+            cur = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='regional_summary'"
+            )
+            if not cur.fetchone():
+                return TaskResult(success=False, message="Table 'regional_summary' not found", details={})
+            cur = conn.execute("SELECT region, total_sales FROM regional_summary ORDER BY region")
+            rows = cur.fetchall()
+            expected = [("East", 125.0), ("North", 250.0), ("South", 325.0)]
+            if len(rows) != len(expected):
+                return TaskResult(success=False, message=f"Expected {len(expected)} rows, got {len(rows)}", details={"rows": rows})
+            for (er, et), (rr, rt) in zip(expected, rows):
+                if rr != er or abs(float(rt) - float(et)) > 0.01:
+                    return TaskResult(success=False, message=f"Mismatch: expected {expected}, got {rows}", details={"rows": rows})
+            return TaskResult(success=True, message="Regional summary correct")
+        finally:
+            conn.close()
+
+
 def get_database_tasks() -> list[type[Task]]:
     """Return all database task classes."""
     return [
         CreateTableAndInsertTask,
         AlterTableTask,
         JoinAndAggregateTask,
+        FilterAndSummarizeTask,
     ]

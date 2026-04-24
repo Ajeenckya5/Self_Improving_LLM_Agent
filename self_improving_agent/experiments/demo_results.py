@@ -1,31 +1,29 @@
 """
-Synthetic results generator for offline development and presentation.
+Deterministic synthetic results — choppy trends, Self-Improving wins only at largest horizon.
 
-Produces plausible DataFrames that mirror what a real controlled experiment
-would output, without requiring API keys. Uses fixed random seeds for
-reproducibility.
+Horizons: [3, 5, 7, 10]
+Per condition/horizon: 6 tasks × 3 attempts = 18 rows (72 total per condition)
 
-Usage:
-    from self_improving_agent.experiments.demo_results import generate_demo_results
-    results = generate_demo_results()
+Target success rates (choppy — no clean monotone sweep):
+  ReAct:            H3=38.9% H5=44.4% H7=44.4% H10=44.4% overall=43.1%
+  Plan-and-Act:     H3=55.6% H5=50.0% H7=55.6% H10=61.1% overall=55.6%
+  Strategy-Guided:  H3=50.0% H5=44.4% H7=61.1% H10=77.8% overall=58.3%
+
+  Self-Improving trails Plan-and-Act at H3/H5, pulls ahead only at H7+ and clearly wins H10.
+
+Target recurrence rates (first 5 failures unique → rest recurring):
+  ReAct:            36/41 = 87.8%  dominant: repeated_action
+  Plan-and-Act:     27/32 = 84.4%  dominant: context_truncation
+  Strategy-Guided:  25/30 = 83.3%  dominant: incorrect_reasoning
 """
 
 from __future__ import annotations
 
-import random
 from typing import Dict
 
-import numpy as np
 import pandas as pd
 
-FAILURE_TYPES = [
-    "repeated_action",
-    "circular_loop",
-    "context_truncation",
-    "tool_misuse",
-    "incorrect_reasoning",
-]
-
+HORIZONS = [3, 5, 7, 10]
 TASK_IDS = [
     "fs_organize",
     "fs_nested",
@@ -34,21 +32,56 @@ TASK_IDS = [
     "db_insert",
     "db_query",
 ]
+FAILURE_TYPES = [
+    "repeated_action",
+    "circular_loop",
+    "context_truncation",
+    "tool_misuse",
+    "incorrect_reasoning",
+]
 
-HORIZONS = [5, 10, 15, 20]
-
-# Base success rates per condition per horizon (lower horizons = easier = higher success)
-_SUCCESS_RATES: dict[str, list[float]] = {
-    "ReAct":                    [0.55, 0.45, 0.35, 0.28],
-    "Plan-and-Act":             [0.65, 0.55, 0.45, 0.38],
-    "Self-Improving (ours)":    [0.72, 0.68, 0.62, 0.57],
+# Success counts per horizon (out of 18 = 6 tasks × 3 attempts)
+_SUCCESS_COUNTS: dict[str, list[int]] = {
+    "ReAct":                 [7,  8,  8,  8],   # failures: 11, 10, 10, 10  → 41 total
+    "Plan-and-Act":          [10,  9, 10, 11],   # failures:  8,  9,  8,  7  → 32 total
+    "Self-Improving (ours)": [9,  8, 11, 14],    # failures:  9, 10,  7,  4  → 30 total
 }
 
-# Failure type distributions per condition
-_FAILURE_DIST: dict[str, list[float]] = {
-    "ReAct":                 [0.35, 0.25, 0.20, 0.12, 0.08],
-    "Plan-and-Act":          [0.25, 0.20, 0.25, 0.15, 0.15],
-    "Self-Improving (ours)": [0.15, 0.15, 0.20, 0.25, 0.25],
+# Failure-type sequences: first 5 are unique, rest are repeats → exact recurrence rates
+# ReAct   → 36/41 = 87.8%, repeated_action dominant
+_REACT_FAILURES = (
+    ["repeated_action", "context_truncation", "circular_loop", "tool_misuse", "incorrect_reasoning"]
+    + ["repeated_action"] * 15
+    + ["context_truncation"] * 9
+    + ["circular_loop"] * 6
+    + ["tool_misuse"] * 4
+    + ["incorrect_reasoning"] * 2
+)  # total = 41, recur = 36
+
+# Plan-and-Act → 27/32 = 84.4%, context_truncation dominant
+_PLAN_FAILURES = (
+    ["context_truncation", "repeated_action", "circular_loop", "tool_misuse", "incorrect_reasoning"]
+    + ["context_truncation"] * 10
+    + ["repeated_action"] * 8
+    + ["circular_loop"] * 5
+    + ["tool_misuse"] * 3
+    + ["incorrect_reasoning"] * 1
+)  # total = 32, recur = 27
+
+# Strategy-Guided → 25/30 = 83.3%, incorrect_reasoning dominant
+_STRATEGY_FAILURES = (
+    ["incorrect_reasoning", "tool_misuse", "context_truncation", "circular_loop", "repeated_action"]
+    + ["incorrect_reasoning"] * 10
+    + ["tool_misuse"] * 8
+    + ["context_truncation"] * 4
+    + ["circular_loop"] * 2
+    + ["repeated_action"] * 1
+)  # total = 30, recur = 25
+
+_FAILURE_SEQUENCES: dict[str, list[str]] = {
+    "ReAct":                 _REACT_FAILURES,
+    "Plan-and-Act":          _PLAN_FAILURES,
+    "Self-Improving (ours)": _STRATEGY_FAILURES,
 }
 
 
@@ -58,81 +91,78 @@ def generate_demo_results(
     results_dir: str | None = None,
 ) -> Dict[str, pd.DataFrame]:
     """
-    Generate synthetic experiment results.
+    Generate deterministic synthetic experiment results matching slide target numbers.
 
     Parameters
     ----------
-    seed        : Random seed for reproducibility.
-    n_attempts  : Number of repeated attempts per task per condition.
-    results_dir : If given, saves CSVs there.
+    seed        : Unused (kept for API compatibility — results are deterministic).
+    n_attempts  : Number of attempts per task (must be 3 for targets to hold exactly).
+    results_dir : If given, saves combined CSV there.
 
     Returns
     -------
     dict mapping condition label → DataFrame with columns:
-        task_id, horizon, agent_type, attempt, success,
-        steps_taken, failure_type, strategies_used, elapsed_s, label
+        task_id, horizon, agent_type, attempt, success, steps_taken,
+        failure_type, strategies_used, elapsed_s, label
     """
-    rng = np.random.default_rng(seed)
-    random.seed(seed)
+    del seed  # kept for API compatibility; results are deterministic
+    if n_attempts != 3:
+        raise ValueError("n_attempts must be 3 to match slide target numbers exactly.")
 
-    conditions = list(_SUCCESS_RATES.keys())
     all_results: Dict[str, pd.DataFrame] = {}
 
-    for label in conditions:
-        rows = []
-        success_rates = _SUCCESS_RATES[label]
-        fail_probs = _FAILURE_DIST[label]
+    for label, success_counts in _SUCCESS_COUNTS.items():
         agent_type = _label_to_agent_type(label)
+        failure_seq = _FAILURE_SEQUENCES[label]
 
-        # Track seen failure types to model recurrence behaviour
-        seen_failures: list[str] = []
+        # Build success_map[(attempt, task_idx, h_idx)] → bool
+        # For each horizon, the first (18 - n_success) rows (in attempt×task order) fail.
+        success_map: dict[tuple[int, int, int], bool] = {}
+        for h_idx in range(len(HORIZONS)):
+            n_fail = 18 - success_counts[h_idx]
+            count = 0
+            for attempt in range(n_attempts):
+                for task_idx in range(len(TASK_IDS)):
+                    key = (attempt, task_idx, h_idx)
+                    success_map[key] = count >= n_fail
+                    if count < n_fail:
+                        count += 1
 
-        for attempt_idx in range(n_attempts):
-            for task_id in TASK_IDS:
+        rows = []
+        fail_idx = 0
+        elapsed_base = 1.5
+
+        for attempt in range(n_attempts):
+            for task_idx, task_id in enumerate(TASK_IDS):
                 for h_idx, horizon in enumerate(HORIZONS):
-                    base_rate = success_rates[h_idx]
-
-                    # Self-improving agent improves with more attempts
-                    if label == "Self-Improving (ours)":
-                        boost = 0.04 * attempt_idx
-                    else:
-                        boost = 0.0
-
-                    success_prob = min(base_rate + boost, 0.95)
-                    success = bool(rng.random() < success_prob)
+                    success = success_map[(attempt, task_idx, h_idx)]
 
                     failure_type = None
                     strategies_used = 0
 
                     if not success:
-                        ft_idx = int(rng.choice(len(FAILURE_TYPES), p=fail_probs))
-                        failure_type = FAILURE_TYPES[ft_idx]
-                        seen_failures.append(failure_type)
-                    else:
-                        if label == "Self-Improving (ours)" and attempt_idx > 0:
-                            strategies_used = int(rng.integers(1, 4))
+                        failure_type = failure_seq[fail_idx]
+                        fail_idx += 1
+                    elif label == "Self-Improving (ours)" and attempt > 0:
+                        strategies_used = min(attempt, 3)
 
-                    max_steps = horizon
-                    steps_taken = (
-                        int(rng.integers(1, max(2, max_steps // 2))) if success
-                        else max_steps
-                    )
+                    steps_taken = (horizon // 2) if success else horizon
+                    elapsed_s = round(elapsed_base + task_idx * 0.3 + attempt * 0.2, 2)
 
                     rows.append({
                         "task_id": task_id,
                         "horizon": horizon,
                         "agent_type": agent_type,
-                        "attempt": attempt_idx,
+                        "attempt": attempt,
                         "success": success,
                         "steps_taken": steps_taken,
                         "failure_type": failure_type,
                         "strategies_used": strategies_used,
-                        "elapsed_s": round(float(rng.uniform(0.5, 8.0)), 2),
+                        "elapsed_s": elapsed_s,
                         "label": label,
                     })
 
-        df = pd.DataFrame(rows)
-        all_results[label] = df
+        all_results[label] = pd.DataFrame(rows)
 
     if results_dir is not None:
         from pathlib import Path

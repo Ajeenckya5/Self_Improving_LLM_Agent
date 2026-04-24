@@ -1,0 +1,4 @@
+condition,success_rate_mean,success_rate_std,repeated_failure_rate,n_tasks
+ReAct,0.5781,0.4951,0.963,192
+Plan-and-Act,0.7812,0.4145,0.9286,192
+Self-Improving (ours),0.6771,0.4688,0.9516,192

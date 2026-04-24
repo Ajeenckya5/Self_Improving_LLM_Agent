@@ -1,0 +1,4 @@
+condition,n_tasks,n_failures,n_unique_failure_types,n_recurring_failures,recurrence_rate,top_failure_type
+Plan-and-Act,192,42,3,39,0.9286,other
+ReAct,192,81,3,78,0.963,repeated_action
+Self-Improving (ours),192,62,3,59,0.9516,repeated_action

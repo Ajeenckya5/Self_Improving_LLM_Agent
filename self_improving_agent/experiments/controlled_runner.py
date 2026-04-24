@@ -15,7 +15,7 @@ import re
 import shutil
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -27,7 +27,6 @@ from ..analysis.strategy_generator import StrategyGenerator
 from ..environments.controlled_env import ControlledEnvironment
 from ..memory.retriever import Retriever
 from ..memory.strategy_memory import StrategyMemory
-from ..tasks import get_all_tasks
 from ..tasks.base import Task
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
@@ -211,6 +210,7 @@ class ControlledEnvAdapter:
 def _make_task_dict(
     task: Task,
     env_root: Path,
+    horizon: int = 10,
 ) -> Tuple[Dict[str, Any], ControlledEnvAdapter]:
     """
     Setup a fresh environment for a task and return (task_dict, adapter).
@@ -228,7 +228,7 @@ def _make_task_dict(
     task_dict = {
         "id": task.task_id,
         "description": task.description,
-        "horizon": 15,
+        "horizon": horizon,
         "env": adapter,
     }
     return task_dict, adapter
@@ -242,7 +242,8 @@ def run_controlled_experiment(
     config: Dict[str, Any],
     env_root: str = "sandbox",
     results_dir: str = "results",
-    num_attempts: int = 1,
+    num_attempts: int = 3,
+    horizons: Optional[List[int]] = None,
     llm_client: Optional[LLMClient] = None,
     dry_run: bool = False,
 ) -> Dict[str, pd.DataFrame]:
@@ -252,11 +253,17 @@ def run_controlled_experiment(
       2. Plan-and-Act baseline
       3. Self-Improving (strategy-guided, memory accumulates)
 
+    horizons: step limits to sweep over; defaults to config evaluation.horizons.
     Returns a dict of {condition_label: DataFrame}.
     """
     env_root_path = Path(env_root)
     results_path = Path(results_dir)
     results_path.mkdir(parents=True, exist_ok=True)
+
+    active_horizons: List[int] = (
+        horizons if horizons is not None
+        else list(config.get("evaluation", {}).get("horizons", [5, 10, 15, 20]))
+    )
 
     if llm_client is None:
         llm_client = LLMClient(config)
@@ -272,10 +279,10 @@ def run_controlled_experiment(
     memory = StrategyMemory(db_path=db_path)
     retriever = Retriever(config=config, memory=memory)
 
-    task_classes = get_all_tasks.__wrapped__ if hasattr(get_all_tasks, "__wrapped__") else None
+    checkpoint_path = results_path / "controlled_results_checkpoint.csv"
+    checkpoint_written = False
 
     def _get_tasks():
-        """Return fresh task instances each call."""
         from ..tasks import get_all_tasks as _gat
         return _gat(str(env_root_path))
 
@@ -285,6 +292,7 @@ def run_controlled_experiment(
         ("Self-Improving (ours)", ControlledStrategyAgent, True),
     ]
 
+    all_rows: List[Dict[str, Any]] = []
     all_results: Dict[str, pd.DataFrame] = {}
 
     for label, agent_cls, use_memory in conditions:
@@ -292,94 +300,104 @@ def run_controlled_experiment(
         tasks = _get_tasks()
         if dry_run:
             tasks = tasks[:3]
-            logger.info("[DRY RUN] Using only first 3 tasks.")
+            horizons_run = active_horizons[:2]
+            logger.info("[DRY RUN] 3 tasks, 2 horizons.")
+        else:
+            horizons_run = active_horizons
 
         rows = []
-        for attempt_idx in range(num_attempts):
-            for task in tasks:
-                # Set up fresh environment
-                task_dict, adapter = _make_task_dict(task, env_root_path)
+        for horizon in horizons_run:
+            logger.info("  horizon=%d", horizon)
+            for attempt_idx in range(num_attempts):
+                for task in tasks:
+                    task_dict, adapter = _make_task_dict(task, env_root_path, horizon=horizon)
 
-                # Retrieve strategies if memory-enabled
-                strategies: List[Dict[str, Any]] = []
-                used_ids: List[int] = []
-                if use_memory:
-                    try:
-                        q_emb = retriever.embed(task.description)
-                        strategies = retriever.retrieve(q_emb, top_k=top_k, threshold=threshold)
-                        used_ids = [s["id"] for s in strategies]
-                    except Exception as exc:
-                        logger.warning("Strategy retrieval failed: %s", exc)
-
-                # Build agent
-                agent_kwargs: Dict[str, Any] = {"config": config, "llm_client": llm_client}
-                if use_memory:
-                    agent_kwargs["retriever"] = retriever
-                agent = agent_cls(**agent_kwargs)
-
-                t0 = time.time()
-                try:
-                    success, trace = agent.run(task_dict, strategies=strategies)
-                except Exception as exc:
-                    logger.error("Agent crashed on task %s: %s", task.task_id, exc)
-                    success = False
-                    trace = None
-
-                # Final success check via task verifier
-                try:
-                    success = adapter.is_success()
-                except Exception:
-                    pass
-
-                elapsed = time.time() - t0
-                steps_taken = trace.total_steps if trace else 0
-
-                # Failure analysis + memory update
-                failure_type: Optional[str] = None
-                if not success:
-                    try:
-                        fa = analyzer.analyze(trace)
-                        failure_type = fa.get("failure_type", "other")
-                        if use_memory and trace is not None:
-                            sg = generator.generate(
-                                {"description": task.description, "id": task.task_id},
-                                fa,
-                            )
-                            q_emb = retriever.embed(task.description)
-                            memory.store(
-                                task_description=task.description,
-                                failure_analysis={**fa, "tags": sg.get("tags", [])},
-                                strategy_text=sg.get("strategy_text", ""),
-                                embedding=q_emb,
-                            )
-                    except Exception as exc:
-                        logger.warning("Post-failure analysis failed: %s", exc)
-
-                # Update strategy outcomes
-                if success and used_ids:
-                    for sid in used_ids:
+                    strategies: List[Dict[str, Any]] = []
+                    used_ids: List[int] = []
+                    if use_memory:
                         try:
-                            memory.update_outcome(sid, success=True)
-                        except Exception:
-                            pass
+                            q_emb = retriever.embed(task.description)
+                            strategies = retriever.retrieve(q_emb, top_k=top_k, threshold=threshold)
+                            used_ids = [s["id"] for s in strategies]
+                        except Exception as exc:
+                            logger.warning("Strategy retrieval failed: %s", exc)
 
-                rows.append({
-                    "task_id": task.task_id,
-                    "horizon": task_dict["horizon"],
-                    "agent_type": agent_cls.AGENT_TYPE,
-                    "attempt": attempt_idx,
-                    "success": success,
-                    "steps_taken": steps_taken,
-                    "failure_type": failure_type if not success else None,
-                    "strategies_used": len(used_ids),
-                    "elapsed_s": round(elapsed, 2),
-                    "label": label,
-                })
+                    agent_kwargs: Dict[str, Any] = {"config": config, "llm_client": llm_client}
+                    if use_memory:
+                        agent_kwargs["retriever"] = retriever
+                    agent = agent_cls(**agent_kwargs)
+                    # Enforce horizon as actual step budget
+                    agent.max_steps = horizon
 
-                logger.info(
-                    "[%s] task=%s success=%s steps=%d",
-                    label, task.task_id, success, steps_taken,
-                )
+                    t0 = time.time()
+                    try:
+                        success, trace = agent.run(task_dict, strategies=strategies)
+                    except Exception as exc:
+                        logger.error("Agent crashed on task %s: %s", task.task_id, exc)
+                        success = False
+                        trace = None
+
+                    try:
+                        success = adapter.is_success()
+                    except Exception:
+                        pass
+
+                    elapsed = time.time() - t0
+                    steps_taken = trace.total_steps if trace else 0
+
+                    failure_type: Optional[str] = None
+                    if not success:
+                        try:
+                            fa = analyzer.analyze(trace)
+                            failure_type = fa.get("failure_type", "other")
+                            if use_memory and trace is not None:
+                                sg = generator.generate(
+                                    {"description": task.description, "id": task.task_id},
+                                    fa,
+                                )
+                                q_emb = retriever.embed(task.description)
+                                memory.store(
+                                    task_description=task.description,
+                                    failure_analysis={**fa, "tags": sg.get("tags", [])},
+                                    strategy_text=sg.get("strategy_text", ""),
+                                    embedding=q_emb,
+                                )
+                        except Exception as exc:
+                            logger.warning("Post-failure analysis failed: %s", exc)
+
+                    if success and used_ids:
+                        for sid in used_ids:
+                            try:
+                                memory.update_outcome(sid, success=True)
+                            except Exception:
+                                pass
+
+                    row = {
+                        "task_id": task.task_id,
+                        "horizon": horizon,
+                        "agent_type": agent_cls.AGENT_TYPE,
+                        "attempt": attempt_idx,
+                        "success": success,
+                        "steps_taken": steps_taken,
+                        "failure_type": failure_type if not success else None,
+                        "strategies_used": len(used_ids),
+                        "elapsed_s": round(elapsed, 2),
+                        "label": label,
+                    }
+                    rows.append(row)
+                    all_rows.append(row)
+
+                    # Checkpoint after every task
+                    pd.DataFrame(all_rows).to_csv(
+                        checkpoint_path, index=False,
+                        mode="w" if not checkpoint_written else "w",
+                    )
+                    checkpoint_written = True
+
+                    logger.info(
+                        "[%s] h=%d attempt=%d task=%s success=%s steps=%d",
+                        label, horizon, attempt_idx, task.task_id, success, steps_taken,
+                    )
 
         df = pd.DataFrame(rows)
         all_results[label] = df

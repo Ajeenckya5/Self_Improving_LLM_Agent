@@ -169,10 +169,45 @@ class BackupAndCleanTask(FilesystemTask):
         return TaskResult(success=True, message="Backup created and originals removed")
 
 
+class DedupAndArchiveTask(FilesystemTask):
+    """Move duplicate (_copy) files into archive, keep originals."""
+
+    def __init__(self, env_root: str):
+        super().__init__(
+            task_id="fs_dedup_archive",
+            description="Create folder 'archive'. Move all files whose name ends with '_copy.txt' "
+                        "into archive/. Keep the original files (file_a.txt, file_b.txt, unique.txt) in root.",
+            env_root=env_root,
+        )
+
+    def setup(self) -> None:
+        root = Path(self.env_root)
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "file_a.txt").write_text("original a")
+        (root / "file_a_copy.txt").write_text("copy of a")
+        (root / "file_b.txt").write_text("original b")
+        (root / "file_b_copy.txt").write_text("copy of b")
+        (root / "unique.txt").write_text("unique content")
+
+    def verify(self, env_state: dict[str, Any]) -> TaskResult:
+        root = Path(self.env_root)
+        archive = root / "archive"
+        if not archive.is_dir():
+            return TaskResult(success=False, message="archive/ folder not found", details={})
+        for f in ["file_a_copy.txt", "file_b_copy.txt"]:
+            if not (archive / f).exists():
+                return TaskResult(success=False, message=f"{f} not in archive/", details={"missing": f})
+        for f in ["file_a.txt", "file_b.txt", "unique.txt"]:
+            if not (root / f).exists():
+                return TaskResult(success=False, message=f"Original {f} removed from root", details={"file": f})
+        return TaskResult(success=True, message="Duplicates archived, originals intact")
+
+
 def get_filesystem_tasks() -> list[type[Task]]:
     """Return filesystem task classes."""
     return [
         MultiStepFileOrganizeTask,
         NestedStructureTask,
         BackupAndCleanTask,
+        DedupAndArchiveTask,
     ]

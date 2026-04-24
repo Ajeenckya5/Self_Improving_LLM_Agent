@@ -1,21 +1,41 @@
+# Active profile: "haiku" | "groq" | "ollama"
+# Override with --profile <name> on CLI, or change active_profile here.
+active_profile: "haiku"
+
+model_profiles:
+  haiku:
+    primary: "claude-haiku-4-5-20251001"
+    analyzer: "claude-haiku-4-5-20251001"
+    backend: "anthropic"
+  groq:
+    primary: "llama-3.1-8b-instant"
+    analyzer: "llama-3.1-8b-instant"
+    backend: "groq"
+  ollama:
+    primary: "llama3"
+    analyzer: "llama3"
+    backend: "ollama"
+
+# Resolved at runtime from active_profile — do not edit directly
 model:
-  primary: "gpt-4"             # Main agent model (or "llama3-8b" via Ollama)
-  analyzer: "gpt-4"            # Model for failure analysis + strategy generation
-  embedding: "all-MiniLM-L6-v2"  # sentence-transformers model for retrieval
+  primary: "claude-haiku-4-5-20251001"
+  analyzer: "claude-haiku-4-5-20251001"
+  embedding: "all-MiniLM-L6-v2"
+  backend: "anthropic"
 
 agent:
-  max_steps: 25                # Maximum steps per task
+  max_steps: 25
   temperature: 0.7
   max_tokens: 1000
 
 memory:
   db_path: "results/strategy_memory.db"
-  top_k: 3                     # Number of strategies to retrieve per task
-  similarity_threshold: 0.65   # Min cosine similarity for retrieval
+  top_k: 3
+  similarity_threshold: 0.80
 
 evaluation:
-  horizons: [5, 10, 15, 20]    # Task horizon lengths to test
-  n_tasks_per_horizon: 25      # Tasks per horizon bucket
+  horizons: [8, 12, 16, 20]
+  n_tasks_per_horizon: 25
   benchmarks: ["agentbench_os", "webarena"]
   baselines: ["react", "plan_act", "no_memory"]
 

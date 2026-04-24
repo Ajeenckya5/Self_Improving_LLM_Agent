@@ -117,22 +117,38 @@ def plot_success_vs_horizon(
     results: Dict[str, pd.DataFrame],
     save_path: str = "results/success_vs_horizon",
 ) -> None:
-    """Line chart of success rate vs. horizon for each method."""
-    fig, ax = plt.subplots(figsize=(8, 5))
+    """Line chart of success rate vs. horizon (or by task when single horizon)."""
+    all_horizons: set = set()
+    for df in results.values():
+        all_horizons.update(df["horizon"].unique())
 
-    for condition, df in results.items():
-        svh = success_vs_horizon(df)
-        # If agent_type column exists, aggregate across all agent types per horizon
-        if "agent_type" in svh.columns:
-            svh = svh.groupby("horizon")["success_rate"].mean().reset_index()
-        elif "success" in svh.columns:
-            svh = svh.rename(columns={"success": "success_rate"})
+    fig, ax = plt.subplots(figsize=(10, 5))
 
-        ax.plot(svh["horizon"], svh["success_rate"], marker="o", label=condition)
+    if len(all_horizons) <= 1:
+        # Single horizon — fall back to per-task success rate
+        task_ids: list | None = None
+        for condition, df in results.items():
+            task_sr = df.groupby("task_id")["success"].mean().reset_index()
+            task_sr = task_sr.sort_values("task_id").reset_index(drop=True)
+            if task_ids is None:
+                task_ids = list(task_sr["task_id"])
+            ax.plot(range(len(task_sr)), task_sr["success"], marker="o", label=condition)
+        ax.set_xticks(range(len(task_ids or [])))
+        ax.set_xticklabels(task_ids or [], rotation=30, ha="right")
+        ax.set_xlabel("Task")
+        ax.set_title("Task Success Rate by Task")
+    else:
+        for condition, df in results.items():
+            svh = success_vs_horizon(df)
+            if "agent_type" in svh.columns:
+                svh = svh.groupby("horizon")["success_rate"].mean().reset_index()
+            elif "success" in svh.columns:
+                svh = svh.rename(columns={"success": "success_rate"})
+            ax.plot(svh["horizon"], svh["success_rate"], marker="o", label=condition)
+        ax.set_xlabel("Task Horizon (steps)")
+        ax.set_title("Task Success Rate vs. Horizon")
 
-    ax.set_xlabel("Task Horizon (steps)")
     ax.set_ylabel("Success Rate")
-    ax.set_title("Task Success Rate vs. Horizon")
     ax.legend()
     ax.set_ylim(0, 1.05)
     _save_fig(fig, save_path)
@@ -177,10 +193,10 @@ def plot_cumulative_success(
     fig, ax = plt.subplots(figsize=(8, 5))
 
     for condition, df in results.items():
-        curve = cumulative_success_curve(df)
-        # Aggregate over agent_types if present
-        agg = curve.groupby("task_n")["cumulative_success"].mean().reset_index()
-        ax.plot(agg["task_n"], agg["cumulative_success"], label=condition)
+        # Sort consistently; compute cumulative rate directly per condition
+        sorted_df = df.sort_values(["attempt", "task_id"]).reset_index(drop=True)
+        cumrate = sorted_df["success"].cumsum() / (sorted_df.index + 1)
+        ax.plot(sorted_df.index + 1, cumrate.values, label=condition)
 
     ax.set_xlabel("Task Number")
     ax.set_ylabel("Cumulative Success Rate")

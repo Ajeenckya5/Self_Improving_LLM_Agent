@@ -32,10 +32,16 @@ sys.path.insert(0, str(Path(__file__).parent))
 import yaml
 
 
-def _load_config() -> dict:
+def _load_config(profile: "str | None" = None) -> dict:
     config_path = Path(__file__).parent / "self_improving_agent" / "config.yaml"
     with open(config_path) as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+    # Apply model profile: CLI --profile > config active_profile > default
+    active = profile or config.get("active_profile", "haiku")
+    profiles = config.get("model_profiles", {})
+    if active in profiles:
+        config["model"].update(profiles[active])
+    return config
 
 
 # ---------------------------------------------------------------------------
@@ -52,15 +58,20 @@ def cmd_run(args: argparse.Namespace) -> None:
         plot_cumulative_success,
     )
 
-    config = _load_config()
+    profile = getattr(args, "profile", None)
+    config = _load_config(profile)
+    print(f"Model profile: {profile or config.get('active_profile', 'haiku')} "
+          f"({config['model']['primary']} / {config['model']['backend']})")
     results_dir = args.output
 
     print("Running controlled task experiment (filesystem + database tasks)...")
+    horizons = getattr(args, "horizons", None) or config.get("evaluation", {}).get("horizons")
     results = run_controlled_experiment(
         config=config,
         env_root=args.sandbox_dir or "sandbox",
         results_dir=results_dir,
         num_attempts=args.attempts,
+        horizons=horizons,
         dry_run=args.dry_run,
     )
 
@@ -101,7 +112,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         print_recurrence_summary,
     )
 
-    results_dir = args.output
+    results_dir = getattr(args, "output", "results")
 
     if args.demo:
         from self_improving_agent.experiments.demo_results import generate_demo_results
@@ -180,6 +191,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--sandbox-dir", default="sandbox", help="Sandbox directory for task environments")
     run_p.add_argument("--dry-run", action="store_true", help="Only run first 3 tasks (for testing)")
     run_p.add_argument("--no-plot", action="store_true", help="Skip generating plots")
+    run_p.add_argument("--profile", default=None, help="Model profile: haiku | groq | ollama")
 
     # --- analyze ---
     ana_p = sub.add_parser("analyze", help="Analyze results and produce all plots")

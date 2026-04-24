@@ -1,15 +1,24 @@
-An LLM agent failed a task. Generate a corrective strategy.
+You are analyzing why an AI agent failed a structured task and writing a concrete corrective strategy.
 
-Task: {task_description}
+Task description: {task_description}
 Failure type: {failure_type}
-Failure summary: {pattern_summary}
-Failed steps: {failed_steps_text}
+What went wrong: {pattern_summary}
+Failed at steps: {failed_steps_text}
 
-Write a corrective strategy (2-4 sentences) that tells a future agent:
-1. What went wrong in this type of task
-2. Specifically what to do differently
+The agent has access to these tools:
+- list_dir(path), read_file(path), write_file(path, content)
+- create_dir(path), delete_file(path), move_file(src, dst)
+- execute_sql(sql), query_sql(sql), list_tables(), get_schema(table)
+- finish(result)
 
-Also provide 3-5 keyword tags for retrieval.
+Write ONE concrete corrective strategy (3-5 sentences) that:
+1. Names the exact mistake made (e.g. "called move_file before create_dir existed")
+2. Gives the correct action sequence for this task type
+3. States a specific decision rule (e.g. "always call list_dir first, then create_dir for each target folder before moving any files")
 
-Respond in JSON:
+Be specific to this task type. Do NOT write generic advice like "check errors carefully" or "verify preconditions".
+
+Also provide 3-5 keyword tags describing this task and failure type for retrieval.
+
+Respond ONLY in valid JSON:
 {"strategy_text": "...", "tags": ["...", "..."]}

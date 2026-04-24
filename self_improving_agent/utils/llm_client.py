@@ -58,6 +58,8 @@ class LLMClient:
                 response = self._ollama_chat(messages, model, temperature, max_tokens)
             elif self._backend == "anthropic":
                 response = self._anthropic_chat(messages, model, temperature, max_tokens)
+            elif self._backend == "groq":
+                response = self._groq_chat(messages, model, temperature, max_tokens)
             else:
                 response = self._openai_chat(messages, model, temperature, max_tokens)
         except Exception as exc:
@@ -115,14 +117,49 @@ class LLMClient:
         if "gpt" in model.lower():
             claude_model = "claude-sonnet-4-6"
 
-        resp = client.messages.create(
-            model=claude_model,
-            system=system_prompt or "You are a helpful AI agent.",
-            messages=filtered,
-            temperature=temperature,
-            max_tokens=max_tokens,
+        for attempt in range(6):
+            try:
+                resp = client.messages.create(
+                    model=claude_model,
+                    system=system_prompt or "You are a helpful AI agent.",
+                    messages=filtered,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                return resp.content[0].text if resp.content else ""
+            except anthropic.RateLimitError:
+                wait = min(15 * (2 ** attempt), 120)
+                logger.warning("Anthropic rate limit (attempt %d/6); retrying in %ds", attempt + 1, wait)
+                time.sleep(wait)
+        raise RuntimeError("Anthropic rate limit exceeded after 6 retries")
+
+    def _groq_chat(
+        self,
+        messages: List[Dict[str, str]],
+        model: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        import openai
+
+        client = openai.OpenAI(
+            api_key=os.environ["GROQ_API_KEY"],
+            base_url="https://api.groq.com/openai/v1",
         )
-        return resp.content[0].text if resp.content else ""
+        for attempt in range(6):
+            try:
+                completion = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                return completion.choices[0].message.content or ""
+            except openai.RateLimitError as exc:
+                wait = min(10 * (2 ** attempt), 120)
+                logger.warning("Groq rate limit (attempt %d/6); retrying in %ds", attempt + 1, wait)
+                time.sleep(wait)
+        raise RuntimeError("Groq rate limit exceeded after 6 retries")
 
     def _ollama_chat(
         self,
@@ -187,17 +224,30 @@ class LLMClient:
     def _detect_backend(self) -> str:
         if os.environ.get("MOCK_LLM") == "1":
             return "mock"
-        if os.environ.get("OLLAMA_BASE_URL"):
-            return "ollama"
+        # Explicit backend from config takes priority over env-var auto-detection
+        explicit = self.config.get("model", {}).get("backend", "")
+        if explicit in ("anthropic", "groq", "ollama", "openai"):
+            return explicit
+        # Env-var fallback (Ollama last — check it's reachable before selecting)
         if os.environ.get("ANTHROPIC_API_KEY"):
             return "anthropic"
+        if os.environ.get("GROQ_API_KEY"):
+            return "groq"
         if os.environ.get("OPENAI_API_KEY"):
             return "openai"
-        logger.warning(
-            "No API key found. Using mock LLM. "
-            "Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or OLLAMA_BASE_URL."
-        )
+        if os.environ.get("OLLAMA_BASE_URL") and self._ollama_reachable():
+            return "ollama"
+        logger.warning("No API key found. Using mock LLM.")
         return "mock"
+
+    def _ollama_reachable(self) -> bool:
+        try:
+            import requests as _req
+            base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+            _req.get(f"{base}/api/tags", timeout=2)
+            return True
+        except Exception:
+            return False
 
     def _log_call(
         self,

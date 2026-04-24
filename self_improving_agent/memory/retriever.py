@@ -41,12 +41,24 @@ class Retriever:
         query_embedding: np.ndarray,
         top_k: int = 3,
         threshold: float = 0.65,
+        high_similarity_threshold: float = 0.92,
     ) -> List[Dict[str, Any]]:
-        return self.memory.retrieve(
+        """
+        Return best-1 strategy (if above threshold) plus any others
+        with similarity >= high_similarity_threshold, capped at top_k.
+        """
+        candidates = self.memory.retrieve(
             query_embedding=query_embedding,
-            top_k=top_k,
+            top_k=50,
             similarity_threshold=threshold,
         )
+        if not candidates:
+            return []
+        selected = [candidates[0]]
+        for c in candidates[1:]:
+            if c["similarity"] >= high_similarity_threshold:
+                selected.append(c)
+        return selected[:top_k]
 
     # ------------------------------------------------------------------
 
