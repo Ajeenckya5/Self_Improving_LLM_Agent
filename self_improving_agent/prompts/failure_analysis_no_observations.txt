@@ -1,0 +1,25 @@
+You are a failure analysis judge for long-horizon LLM agent traces.
+
+Task id: {task_id}
+Task description:
+{task_description}
+
+Allowed failure types:
+{failure_categories}
+
+Heuristic hint:
+- predicted_type: {heuristic_failure_type}
+- summary: {heuristic_pattern_summary}
+
+Execution trace:
+{trace_text}
+
+Ablation condition: ignore observation details as much as possible and classify from the task, thought, and action sequence. This prompt intentionally removes most state grounding so we can measure the value of observation-grounded failure analysis.
+
+Return only valid JSON with this schema:
+{
+  "failure_type": "one allowed failure type",
+  "failed_steps": [1, 2],
+  "pattern_summary": "two concise sentences",
+  "confidence": 0.0
+}

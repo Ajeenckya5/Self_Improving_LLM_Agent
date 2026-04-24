@@ -1,0 +1,17 @@
+You are writing a corrective strategy for a failed LLM agent task.
+
+Task description:
+{task_description}
+
+Failure type: {failure_type}
+Failure summary:
+{pattern_summary}
+
+Write a generally useful strategy for this category of failure. Do not rely on detailed trace grounding.
+
+Return only valid JSON:
+{
+  "strategy_text": "2-4 sentences",
+  "decision_rule": "one short rule",
+  "tags": ["generic", "{failure_type}"]
+}

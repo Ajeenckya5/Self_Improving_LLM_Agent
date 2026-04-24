@@ -1,27 +1,36 @@
-# Active profile: "haiku" | "groq" | "ollama"
+# Active profile: "xai" | "haiku" | "groq" | "ollama"
 # Override with --profile <name> on CLI, or change active_profile here.
-active_profile: "haiku"
+active_profile: "xai"
 
 model_profiles:
+  xai:
+    primary: "grok-4.20-reasoning"
+    analyzer: "grok-4.20-reasoning"
+    judge: "grok-4.20-reasoning"
+    backend: "xai"
   haiku:
     primary: "claude-haiku-4-5-20251001"
     analyzer: "claude-haiku-4-5-20251001"
+    judge: "claude-haiku-4-5-20251001"
     backend: "anthropic"
   groq:
     primary: "llama-3.1-8b-instant"
     analyzer: "llama-3.1-8b-instant"
+    judge: "llama-3.1-8b-instant"
     backend: "groq"
   ollama:
     primary: "llama3"
     analyzer: "llama3"
+    judge: "llama3"
     backend: "ollama"
 
 # Resolved at runtime from active_profile — do not edit directly
 model:
-  primary: "claude-haiku-4-5-20251001"
-  analyzer: "claude-haiku-4-5-20251001"
+  primary: "grok-4.20-reasoning"
+  analyzer: "grok-4.20-reasoning"
+  judge: "grok-4.20-reasoning"
   embedding: "all-MiniLM-L6-v2"
-  backend: "anthropic"
+  backend: "xai"
 
 agent:
   max_steps: 25
@@ -38,6 +47,29 @@ evaluation:
   n_tasks_per_horizon: 25
   benchmarks: ["agentbench_os", "webarena"]
   baselines: ["react", "plan_act", "no_memory"]
+
+analysis:
+  failure_analyzer: "llm"          # llm | heuristic
+  failure_prompt: "failure_analysis.txt"
+  strategy_prompt: "strategy_gen.txt"
+  judge_prompt: "evaluation_judge.txt"
+  judge_model: "grok-4.20-reasoning"
+  prompt_ablation_conditions:
+    full_grounded:
+      analyzer: "llm"
+      failure_prompt: "failure_analysis.txt"
+      strategy_prompt: "strategy_gen.txt"
+    no_observation_failure_prompt:
+      analyzer: "llm"
+      failure_prompt: "failure_analysis_no_observations.txt"
+      strategy_prompt: "strategy_gen.txt"
+    generic_strategy_prompt:
+      analyzer: "llm"
+      failure_prompt: "failure_analysis.txt"
+      strategy_prompt: "strategy_gen_generic.txt"
+    heuristic_analyzer:
+      analyzer: "heuristic"
+      strategy_prompt: "strategy_gen.txt"
 
 logging:
   llm_calls_log: "results/llm_calls.jsonl"

@@ -1,11 +1,12 @@
 """
-Unified LLM client supporting OpenAI, Anthropic, Ollama, and a mock backend.
+Unified LLM client supporting OpenAI, xAI, Anthropic, Ollama, and a mock backend.
 
 Backend selection priority:
   1. MOCK_LLM=1 env var  → deterministic mock (for CI)
   2. OLLAMA_BASE_URL set → local Ollama
   3. ANTHROPIC_API_KEY   → Anthropic Claude
-  4. OPENAI_API_KEY      → OpenAI GPT
+  4. XAI_API_KEY         → xAI Grok
+  5. OPENAI_API_KEY      → OpenAI GPT
 """
 
 from __future__ import annotations
@@ -60,6 +61,8 @@ class LLMClient:
                 response = self._anthropic_chat(messages, model, temperature, max_tokens)
             elif self._backend == "groq":
                 response = self._groq_chat(messages, model, temperature, max_tokens)
+            elif self._backend == "xai":
+                response = self._xai_chat(messages, model, temperature, max_tokens)
             else:
                 response = self._openai_chat(messages, model, temperature, max_tokens)
         except Exception as exc:
@@ -161,6 +164,35 @@ class LLMClient:
                 time.sleep(wait)
         raise RuntimeError("Groq rate limit exceeded after 6 retries")
 
+    def _xai_chat(
+        self,
+        messages: List[Dict[str, str]],
+        model: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        import openai
+
+        client = openai.OpenAI(
+            api_key=os.environ["XAI_API_KEY"],
+            base_url=os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1"),
+            timeout=float(os.environ.get("XAI_TIMEOUT", "3600")),
+        )
+        for attempt in range(6):
+            try:
+                completion = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                return completion.choices[0].message.content or ""
+            except openai.RateLimitError:
+                wait = min(10 * (2 ** attempt), 120)
+                logger.warning("xAI rate limit (attempt %d/6); retrying in %ds", attempt + 1, wait)
+                time.sleep(wait)
+        raise RuntimeError("xAI rate limit exceeded after 6 retries")
+
     def _ollama_chat(
         self,
         messages: List[Dict[str, str]],
@@ -189,18 +221,38 @@ class LLMClient:
         )
 
         # Strategy generation mock
-        if "corrective strategy" in last_user.lower() or "generate a corrective" in last_user.lower():
+        if (
+            "evaluation judge" not in last_user.lower()
+            and ("corrective strategy" in last_user.lower() or "generate a corrective" in last_user.lower())
+        ):
             return json.dumps({
-                "strategy_text": "When facing this type of task, first verify preconditions before taking action. If an action fails, check the error message carefully and try an alternative approach rather than repeating the same action.",
+                "strategy_text": "The agent repeated an action after the observation showed no new state change. For this task type, inspect the latest observation, choose a different tool or next dependency, and verify the target state before calling finish(result).",
+                "decision_rule": "If an action has already returned the same observation twice, never repeat it; switch to a state-inspection or dependency-creation step.",
                 "tags": ["error_handling", "precondition_check", "alternative_approach"],
             })
 
         # Failure analysis mock
-        if "failure" in last_user.lower() and "analyze" in last_user.lower():
+        if "failure analysis judge" in last_user.lower() or (
+            "failure" in last_user.lower() and "analyze" in last_user.lower()
+        ):
             return json.dumps({
                 "failure_type": "repeated_action",
                 "failed_steps": [3, 4, 5],
                 "pattern_summary": "The agent repeated the same bash command without checking its output.",
+                "confidence": 0.8,
+            })
+
+        # Evaluation judge mock
+        if "evaluation judge" in last_user.lower() and "overall_score" in last_user.lower():
+            return json.dumps({
+                "failure_type_correct": True,
+                "failed_steps_overlap": 1.0,
+                "analysis_grounding_score": 4,
+                "strategy_specificity_score": 4,
+                "strategy_actionability_score": 4,
+                "retrieval_tags_score": 4,
+                "overall_score": 4,
+                "rationale": "The candidate is grounded in the repeated action pattern and gives a concrete prevention rule.",
             })
 
         # Planning mock
@@ -226,13 +278,18 @@ class LLMClient:
             return "mock"
         # Explicit backend from config takes priority over env-var auto-detection
         explicit = self.config.get("model", {}).get("backend", "")
-        if explicit in ("anthropic", "groq", "ollama", "openai"):
+        if explicit in ("anthropic", "groq", "ollama", "openai", "xai"):
+            if explicit == "xai" and not os.environ.get("XAI_API_KEY"):
+                logger.warning("xAI backend selected but XAI_API_KEY is not set. Using mock LLM.")
+                return "mock"
             return explicit
         # Env-var fallback (Ollama last — check it's reachable before selecting)
         if os.environ.get("ANTHROPIC_API_KEY"):
             return "anthropic"
         if os.environ.get("GROQ_API_KEY"):
             return "groq"
+        if os.environ.get("XAI_API_KEY"):
+            return "xai"
         if os.environ.get("OPENAI_API_KEY"):
             return "openai"
         if os.environ.get("OLLAMA_BASE_URL") and self._ollama_reachable():

@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 from ..agent.base_agent import BaseAgent, AgentTrace
 from ..analysis.failure_analyzer import FailureAnalyzer
+from ..analysis.llm_failure_analyzer import LLMFailureAnalyzer
 from ..analysis.strategy_generator import StrategyGenerator
 from ..memory.strategy_memory import StrategyMemory
 from ..memory.retriever import Retriever
@@ -62,7 +63,12 @@ def run_experiment(
     if use_memory and retriever is None and memory is not None:
         retriever = Retriever(config=config, memory=memory)
 
-    analyzer = FailureAnalyzer()
+    analysis_mode = config.get("analysis", {}).get("failure_analyzer", "heuristic")
+    analyzer = (
+        LLMFailureAnalyzer(config=config, llm_client=llm_client)
+        if analysis_mode == "llm"
+        else FailureAnalyzer()
+    )
     generator = StrategyGenerator(config=config, llm_client=llm_client)
 
     top_k = config.get("memory", {}).get("top_k", 3)
@@ -110,7 +116,7 @@ def run_experiment(
         failure_type = None
         if not success and use_memory and memory is not None and retriever is not None:
             try:
-                failure = analyzer.analyze(trace)
+                failure = _analyze_failure(analyzer, task, trace)
                 failure_type = failure.get("failure_type", "other")
                 strategy_result = generator.generate(task, failure)
                 query_emb = retriever.embed(task_description)
@@ -126,7 +132,7 @@ def run_experiment(
                 logger.warning("Memory update failed for task %s: %s", task_id, exc)
         elif not success:
             try:
-                failure = analyzer.analyze(trace)
+                failure = _analyze_failure(analyzer, task, trace)
                 failure_type = failure.get("failure_type", "other")
             except Exception:
                 failure_type = "other"
@@ -165,3 +171,9 @@ def run_experiment(
                 pass
 
     return pd.DataFrame(results)
+
+
+def _analyze_failure(analyzer: Any, task: Dict[str, Any], trace: AgentTrace) -> Dict[str, Any]:
+    if isinstance(analyzer, LLMFailureAnalyzer):
+        return analyzer.analyze(task, trace)
+    return analyzer.analyze(trace)

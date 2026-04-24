@@ -5,8 +5,10 @@ Commands:
   python main.py run             Run controlled task experiment (filesystem + database)
   python main.py agentbench      Run AgentBench OS experiment
   python main.py ablation        Run ablation study
+  python main.py member2-eval    Evaluate Member 2 failure/strategy prompts
+  python main.py member2-ablation Run Member 2 prompt ablations
 
-Set OPENAI_API_KEY (or ANTHROPIC_API_KEY) in .env or environment.
+Set XAI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY in .env or environment.
 """
 
 import argparse
@@ -173,6 +175,36 @@ def cmd_ablation(args: argparse.Namespace) -> None:
     subprocess.run(cmd, check=True)
 
 
+def cmd_member2_eval(args: argparse.Namespace) -> None:
+    """Run Member 2 prompt evaluation harness."""
+    import subprocess
+    cmd = [sys.executable, "-m", "self_improving_agent.experiments.member2_eval"]
+    if args.mock:
+        cmd.append("--mock")
+    if args.profile:
+        cmd += ["--profile", args.profile]
+    if args.dataset:
+        cmd += ["--dataset", args.dataset]
+    if args.output:
+        cmd += ["--output", args.output]
+    subprocess.run(cmd, check=True)
+
+
+def cmd_member2_ablation(args: argparse.Namespace) -> None:
+    """Run Member 2 prompt ablation study."""
+    import subprocess
+    cmd = [sys.executable, "-m", "self_improving_agent.experiments.member2_ablation"]
+    if args.mock:
+        cmd.append("--mock")
+    if args.profile:
+        cmd += ["--profile", args.profile]
+    if args.dataset:
+        cmd += ["--dataset", args.dataset]
+    if args.output_dir:
+        cmd += ["--output-dir", args.output_dir]
+    subprocess.run(cmd, check=True)
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -191,7 +223,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--sandbox-dir", default="sandbox", help="Sandbox directory for task environments")
     run_p.add_argument("--dry-run", action="store_true", help="Only run first 3 tasks (for testing)")
     run_p.add_argument("--no-plot", action="store_true", help="Skip generating plots")
-    run_p.add_argument("--profile", default=None, help="Model profile: haiku | groq | ollama")
+    run_p.add_argument("--profile", default=None, help="Model profile: xai | haiku | groq | ollama")
 
     # --- analyze ---
     ana_p = sub.add_parser("analyze", help="Analyze results and produce all plots")
@@ -210,6 +242,20 @@ def build_parser() -> argparse.ArgumentParser:
     abl_p.add_argument("--n-tasks", type=int, default=None)
     abl_p.add_argument("--dry-run", action="store_true")
 
+    # --- member2-eval ---
+    m2_p = sub.add_parser("member2-eval", help="Evaluate Member 2 prompts with LLM judge")
+    m2_p.add_argument("--dataset", default=None)
+    m2_p.add_argument("--output", default=None)
+    m2_p.add_argument("--profile", default=None, help="Model profile: xai | haiku | groq | ollama")
+    m2_p.add_argument("--mock", action="store_true")
+
+    # --- member2-ablation ---
+    m2a_p = sub.add_parser("member2-ablation", help="Run Member 2 prompt ablations")
+    m2a_p.add_argument("--dataset", default=None)
+    m2a_p.add_argument("--output-dir", default=None)
+    m2a_p.add_argument("--profile", default=None, help="Model profile: xai | haiku | groq | ollama")
+    m2a_p.add_argument("--mock", action="store_true")
+
     return parser
 
 
@@ -225,6 +271,10 @@ def main() -> None:
         cmd_agentbench(args)
     elif args.cmd == "ablation":
         cmd_ablation(args)
+    elif args.cmd == "member2-eval":
+        cmd_member2_eval(args)
+    elif args.cmd == "member2-ablation":
+        cmd_member2_ablation(args)
     else:
         parser.print_help()
 

@@ -11,6 +11,7 @@ from .metrics import (
     plot_ablation,
 )
 from .evaluate import run_experiment
+from .llm_judge import FailureStrategyJudge
 
 __all__ = [
     "task_success_rate",
@@ -24,4 +25,5 @@ __all__ = [
     "plot_cumulative_success",
     "plot_ablation",
     "run_experiment",
+    "FailureStrategyJudge",
 ]

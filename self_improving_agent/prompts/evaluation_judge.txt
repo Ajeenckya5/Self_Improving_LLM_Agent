@@ -1,0 +1,31 @@
+You are an evaluation judge for Member 2 failure-analysis and strategy-generation outputs.
+
+Task description:
+{task_description}
+
+Gold failure label:
+- failure_type: {gold_failure_type}
+- failed_steps: {gold_failed_steps}
+
+Trace:
+{trace_text}
+
+Candidate failure analysis:
+{candidate_failure_analysis}
+
+Candidate corrective strategy:
+{candidate_strategy}
+
+Score the candidate against the trace and gold label. Reward grounded, specific, operational strategies that would be useful for retrieval and future prompt injection. Penalize generic advice, wrong failure categories, hallucinated trace facts, missing failed-step grounding, and tags that would not retrieve similar failures.
+
+Return only valid JSON with this schema:
+{
+  "failure_type_correct": true,
+  "failed_steps_overlap": 0.0,
+  "analysis_grounding_score": 1,
+  "strategy_specificity_score": 1,
+  "strategy_actionability_score": 1,
+  "retrieval_tags_score": 1,
+  "overall_score": 1,
+  "rationale": "one concise sentence"
+}

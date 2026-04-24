@@ -1,14 +1,37 @@
-You are analyzing why an LLM agent failed a task.
+You are a failure analysis judge for long-horizon LLM agent traces.
 
-Task: {task_description}
+Task id: {task_id}
+Task description:
+{task_description}
+
+Allowed failure types:
+{failure_categories}
+
+Heuristic hint:
+- predicted_type: {heuristic_failure_type}
+- summary: {heuristic_pattern_summary}
 
 Execution trace:
 {trace_text}
 
-Identify:
-1. The primary failure type (choose one: repeated_action, circular_loop, context_truncation, incorrect_reasoning, tool_misuse, other)
-2. The specific steps where failure began (list step numbers)
-3. A 2-sentence summary of the failure pattern
+Classify the primary root-cause failure. Use the heuristic hint only as weak evidence; prefer the trace if they disagree.
 
-Respond in JSON:
-{"failure_type": "...", "failed_steps": [...], "pattern_summary": "..."}
+Decision rules:
+1. repeated_action means the exact same action is repeated at least 3 times without new information.
+2. circular_loop means a multi-step action pattern repeats, even if no single action reaches 3 repeats.
+3. context_truncation means missing or truncated observations caused loss of needed information.
+4. tool_misuse means malformed calls, wrong tool choice, invalid arguments, or ignored tool errors are the root cause.
+5. incorrect_reasoning means the agent had enough observations but drew the wrong conclusion about state or goal.
+6. planning_error means the plan/order omitted a required dependency or put steps in the wrong sequence.
+7. environmental_change means the agent assumed a stale or wrong environment state.
+8. false_assumption means the agent invented facts about files, schema, pages, or task constraints.
+9. instruction_misinterpretation means the agent optimized for the wrong goal.
+10. memory_limitation means the agent forgot a prior observation, constraint, or completed subgoal.
+
+Return only valid JSON with this schema:
+{
+  "failure_type": "one allowed failure type",
+  "failed_steps": [1, 2],
+  "pattern_summary": "two concise sentences grounded in the trace",
+  "confidence": 0.0
+}

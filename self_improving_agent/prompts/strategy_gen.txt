@@ -1,24 +1,34 @@
-You are analyzing why an AI agent failed a structured task and writing a concrete corrective strategy.
+You generate retrieval-ready corrective strategies for future LLM agents.
 
-Task description: {task_description}
+Task id: {task_id}
+Task description:
+{task_description}
+
 Failure type: {failure_type}
-What went wrong: {pattern_summary}
-Failed at steps: {failed_steps_text}
+Failure summary:
+{pattern_summary}
 
-The agent has access to these tools:
-- list_dir(path), read_file(path), write_file(path, content)
-- create_dir(path), delete_file(path), move_file(src, dst)
-- execute_sql(sql), query_sql(sql), list_tables(), get_schema(table)
-- finish(result)
+Failed steps: {failed_steps_text}
 
-Write ONE concrete corrective strategy (3-5 sentences) that:
-1. Names the exact mistake made (e.g. "called move_file before create_dir existed")
-2. Gives the correct action sequence for this task type
-3. States a specific decision rule (e.g. "always call list_dir first, then create_dir for each target folder before moving any files")
+Trace excerpt:
+{raw_trace_excerpt}
 
-Be specific to this task type. Do NOT write generic advice like "check errors carefully" or "verify preconditions".
+The future agent may use tools like:
+- bash(cmd), read_file(path), write_file(path, content), check_output(cmd)
+- navigate(url), click(selector), type(selector, text), finish(result)
 
-Also provide 3-5 keyword tags describing this task and failure type for retrieval.
+Write ONE concrete corrective strategy that can be retrieved for similar future tasks.
 
-Respond ONLY in valid JSON:
-{"strategy_text": "...", "tags": ["...", "..."]}
+Requirements:
+1. Name the exact mistake pattern from the trace.
+2. Give the corrected action sequence in operational order.
+3. Include a decision rule that prevents recurrence.
+4. Include verification behavior before finish(result).
+5. Avoid generic advice such as "be careful" or "check errors"; every sentence must mention task state, tools, evidence, or ordering.
+
+Return only valid JSON with this schema:
+{
+  "strategy_text": "3-5 grounded sentences",
+  "decision_rule": "one if/then or always/never rule",
+  "tags": ["failure_type", "task_domain", "tool_or_state_signal"]
+}
