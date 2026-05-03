@@ -139,13 +139,15 @@ class FailureAnalyzer:
         failed_steps = []
         for s in steps:
             obs = s.get("observation", "").lower()
-            action = s.get("action", "").lower()
+            # Convert action to string if it's a dict
+            action = s.get("action", "")
+            action_str = str(action).lower() if isinstance(action, dict) else action.lower()
             if obs.startswith("error: could not parse") or obs.startswith("error: tool") or \
                ("error" in obs and ("argument" in obs or "syntax" in obs or "format" in obs)):
                 failed_steps.append(s["step"])
             elif "error" in obs and not s.get("success", True):
                 # Check if the action itself looks malformed
-                if not re.search(r"\w+\(", action):
+                if not re.search(r"\w+\(", action_str):
                     failed_steps.append(s["step"])
 
         if len(failed_steps) >= 2:
@@ -197,10 +199,11 @@ class FailureAnalyzer:
             return [
                 {
                     "step": s.step,
-                    "thought": s.thought,
+                    # Support both base_agent.TraceStep (thought) and trace_logger.TraceStep (reasoning)
+                    "thought": getattr(s, "thought", getattr(s, "reasoning", "")),
                     "action": s.action,
                     "observation": s.observation,
-                    "success": s.success,
+                    "success": getattr(s, "success", True),
                 }
                 for s in trace.steps
             ]
@@ -211,8 +214,13 @@ class FailureAnalyzer:
         return []
 
     @staticmethod
-    def _normalise_action(action: str) -> str:
-        return action.strip().lower()
+    def _normalise_action(action: Any) -> str:
+        # Handle both dict and string action formats
+        if isinstance(action, dict):
+            # Convert dict to string representation
+            action = str(action)
+        action_str = str(action).strip().lower()
+        return action_str
 
     @staticmethod
     def _build_result(
@@ -235,10 +243,13 @@ class FailureAnalyzer:
             marker = " <<" if s["step"] in highlight_steps else ""
             obs = s.get("observation", "")
             obs_short = (obs[:150] + "...") if len(obs) > 150 else obs
+            # Handle both string and dict action formats
+            action = s.get("action", "")
+            action_str = str(action) if isinstance(action, dict) else action
             lines.append(
                 f"Step {s['step']}{marker}\n"
                 f"  Thought: {s.get('thought', '')[:100]}\n"
-                f"  Action: {s.get('action', '')[:100]}\n"
+                f"  Action: {action_str[:100]}\n"
                 f"  Observation: {obs_short}"
             )
         return "\n".join(lines)

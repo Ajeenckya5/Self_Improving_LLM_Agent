@@ -28,8 +28,11 @@ from ..environments.controlled_env import ControlledEnvironment
 from ..memory.retriever import Retriever
 from ..memory.strategy_memory import StrategyMemory
 from ..tasks.base import Task
+from ..utils.dataset_collector import DatasetCollector
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
+from ..utils.reproducibility import RunTracker
+from ..utils.trace_logger import ExecutionTrace, TraceLogger
 
 logger = get_logger(__name__)
 
@@ -246,6 +249,7 @@ def run_controlled_experiment(
     horizons: Optional[List[int]] = None,
     llm_client: Optional[LLMClient] = None,
     dry_run: bool = False,
+    run_tracker: Optional[RunTracker] = None,
 ) -> Dict[str, pd.DataFrame]:
     """
     Run the three-condition experiment on the controlled task suite:
@@ -253,7 +257,10 @@ def run_controlled_experiment(
       2. Plan-and-Act baseline
       3. Self-Improving (strategy-guided, memory accumulates)
 
+    Integrates trace logging and dataset collection for Member 1 reproducibility.
+
     horizons: step limits to sweep over; defaults to config evaluation.horizons.
+    run_tracker: Optional RunTracker for reproducibility tracking.
     Returns a dict of {condition_label: DataFrame}.
     """
     env_root_path = Path(env_root)
@@ -282,6 +289,10 @@ def run_controlled_experiment(
     checkpoint_path = results_path / "controlled_results_checkpoint.csv"
     checkpoint_written = False
 
+    # Member 1: Trace logging and dataset collection setup
+    trace_logger = TraceLogger(traces_dir=results_path / "traces")
+    dataset_collectors: Dict[str, DatasetCollector] = {}
+
     def _get_tasks():
         from ..tasks import get_all_tasks as _gat
         return _gat(str(env_root_path))
@@ -297,6 +308,16 @@ def run_controlled_experiment(
 
     for label, agent_cls, use_memory in conditions:
         logger.info("Running condition: %s", label)
+        agent_type = agent_cls.AGENT_TYPE
+
+        # Create dataset collector for this agent type
+        dataset_collector = DatasetCollector(
+            dataset_dir=results_path / f"dataset_{agent_type}",
+            traces_dir=results_path / f"traces_{agent_type}",
+            analyzer=analyzer,
+        )
+        dataset_collectors[agent_type] = dataset_collector
+
         tasks = _get_tasks()
         if dry_run:
             tasks = tasks[:3]
@@ -346,6 +367,40 @@ def run_controlled_experiment(
                     steps_taken = trace.total_steps if trace else 0
 
                     failure_type: Optional[str] = None
+
+                    # Member 1: Add trace to dataset with labeled failure
+                    if trace is not None:
+                        # Convert AgentTrace to ExecutionTrace for the dataset collector
+                        execution_trace = ExecutionTrace(
+                            task_id=trace.task_id,
+                            agent_type=agent_type,
+                            attempt=attempt_idx,
+                            success=success,
+                            final_message=trace.final_success and "Task succeeded" or "Task failed",
+                        )
+                        # Copy steps
+                        for step in trace.steps:
+                            from ..utils.trace_logger import TraceStep
+                            execution_trace.steps.append(
+                                TraceStep(
+                                    step=step.step,
+                                    state={},
+                                    action={"action": step.action},
+                                    observation=step.observation,
+                                    reasoning=step.thought,
+                                )
+                            )
+
+                        # Add to dataset collector (analyzes failure and saves)
+                        labeled = dataset_collector.add_trace(
+                            trace=execution_trace,
+                            horizon=horizon,
+                            elapsed_s=elapsed,
+                            strategies_used=len(used_ids),
+                            save_trace=True,
+                        )
+                        failure_type = labeled.failure_type
+
                     if not success:
                         try:
                             fa = analyzer.analyze(trace)
@@ -395,11 +450,20 @@ def run_controlled_experiment(
                     checkpoint_written = True
 
                     logger.info(
-                        "[%s] h=%d attempt=%d task=%s success=%s steps=%d",
-                        label, horizon, attempt_idx, task.task_id, success, steps_taken,
+                        "[%s] h=%d attempt=%d task=%s success=%s steps=%d failure=%s",
+                        label, horizon, attempt_idx, task.task_id, success, steps_taken, failure_type,
                     )
 
         df = pd.DataFrame(rows)
         all_results[label] = df
+
+        # Member 1: Save labeled dataset for this agent type
+        try:
+            dataset_path = dataset_collector.save_dataset_csv(
+                filename=f"labeled_dataset_{agent_type}.csv"
+            )
+            logger.info("Saved labeled dataset to %s", dataset_path)
+        except Exception as exc:
+            logger.warning("Failed to save dataset for %s: %s", agent_type, exc)
 
     return all_results
