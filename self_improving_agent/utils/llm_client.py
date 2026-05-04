@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shlex
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -301,6 +303,10 @@ class LLMClient:
         if not desc:
             return ""
 
+        diverse_action = self._mock_diverse_os_task_action(task_description)
+        if diverse_action:
+            return diverse_action
+
         if "file named 'run.sh'" in desc or "make it executable" in desc:
             return (
                 "Thought: I need to create the script, make it executable, and run it.\n"
@@ -388,6 +394,248 @@ class LLMClient:
             )
 
         return ""
+
+    def _mock_diverse_os_task_action(self, task_description: str) -> str:
+        """Return deterministic actions for diverse generated OS tasks."""
+        text = task_description
+
+        match = re.search(
+            r"Find the file named '([^']+)'.*write the exact content to '([^']+)'",
+            text,
+        )
+        if match:
+            filename, output = match.groups()
+            cmd = (
+                f"mkdir -p {self._mock_parent_dir(output)} && "
+                f"found=$(find . -name {shlex.quote(filename)} -type f -print -quit); "
+                f"cat \"$found\" > {shlex.quote(output)} && cat {shlex.quote(output)}"
+            )
+            return (
+                "Thought: I need to locate the requested file and copy its content to the answer file.\n"
+                f"Action: bash({cmd})"
+            )
+
+        match = re.search(
+            r"Create an executable script '([^']+)' that prints '([^']+)'.*save stdout to '([^']+)'",
+            text,
+        )
+        if match:
+            script, message, output = match.groups()
+            cmd = (
+                f"mkdir -p {self._mock_parent_dir(script)} {self._mock_parent_dir(output)} && "
+                f"printf '#!/bin/bash\\necho %s\\n' {shlex.quote(message)} > {shlex.quote(script)} && "
+                f"chmod +x {shlex.quote(script)} && "
+                f"./{script} > {shlex.quote(output)} && cat {shlex.quote(output)}"
+            )
+            return (
+                "Thought: I need to create the executable script, run it, and capture stdout.\n"
+                f"Action: bash({cmd})"
+            )
+
+        match = re.search(
+            r"Count the lines in '([^']+)' and write the integer total to '([^']+)'",
+            text,
+        )
+        if match:
+            source, output = match.groups()
+            cmd = (
+                f"mkdir -p {self._mock_parent_dir(output)} && "
+                f"wc -l < {shlex.quote(source)} | tr -d ' ' > {shlex.quote(output)} && "
+                f"cat {shlex.quote(output)}"
+            )
+            return (
+                "Thought: I need to count source lines and write only the integer result.\n"
+                f"Action: bash({cmd})"
+            )
+
+        match = re.search(
+            r"Create these directories: (.+?)\. In each directory, create a '.gitkeep'",
+            text,
+        )
+        if match:
+            dirs = re.findall(r"'([^']+)'", match.group(1))
+            mkdirs = " ".join(shlex.quote(d) for d in dirs)
+            touches = " ".join(shlex.quote(f"{d}/.gitkeep") for d in dirs)
+            cmd = f"mkdir -p {mkdirs} && touch {touches} && find . -maxdepth 3 -type d | sort"
+            return (
+                "Thought: I need to create every requested directory and placeholder file.\n"
+                f"Action: bash({cmd})"
+            )
+
+        match = re.search(
+            r"Move all \.txt files from '([^']+)' to '([^']+)'.*manifest to '([^']+)'",
+            text,
+        )
+        if match:
+            source, archive, manifest = match.groups()
+            manifest_name = Path(manifest).name
+            cmd = (
+                f"mkdir -p {shlex.quote(archive)} {self._mock_parent_dir(manifest)} && "
+                f"for f in {shlex.quote(source)}/*.txt; do [ -e \"$f\" ] && mv \"$f\" {shlex.quote(archive)}/; done; "
+                f"find {shlex.quote(archive)} -maxdepth 1 -name '*.txt' ! -name {shlex.quote(manifest_name)} "
+                f"-exec basename {{}} \\; | sort > {shlex.quote(manifest)} && "
+                f"cat {shlex.quote(manifest)}"
+            )
+            return (
+                "Thought: I need to move text files and write the moved-file manifest.\n"
+                f"Action: bash({cmd})"
+            )
+
+        match = re.search(
+            r"In file '([^']+)', replace every '([^']+)' with '([^']+)'",
+            text,
+        )
+        if match:
+            config, old, new = match.groups()
+            code = (
+                "from pathlib import Path\n"
+                f"p = Path({config!r})\n"
+                f"p.write_text(p.read_text().replace({old!r}, {new!r}))\n"
+            )
+            cmd = f"{self._mock_python_exec_cmd(code)} && cat {shlex.quote(config)}"
+            return (
+                "Thought: I need to replace every old token in the config file.\n"
+                f"Action: bash({cmd})"
+            )
+
+        match = re.search(
+            r"Read '([^']+)', update the 'host' field to '([^']+)'.*'port' field to '([^']+)'.*backup at '([^']+)'",
+            text,
+        )
+        if match:
+            config, host, port, backup = match.groups()
+            code = (
+                "from pathlib import Path\n"
+                f"p = Path({config!r})\n"
+                f"Path({backup!r}).parent.mkdir(parents=True, exist_ok=True)\n"
+                f"Path({backup!r}).write_text(p.read_text())\n"
+                "lines = []\n"
+                "for line in p.read_text().splitlines():\n"
+                f"    if line.startswith('host='): lines.append('host={host}')\n"
+                f"    elif line.startswith('port='): lines.append('port={port}')\n"
+                "    else: lines.append(line)\n"
+                "p.write_text('\\n'.join(lines) + '\\n')\n"
+            )
+            cmd = f"{self._mock_python_exec_cmd(code)} && cat {shlex.quote(config)}"
+            return (
+                "Thought: I need to back up the config and update host and port.\n"
+                f"Action: bash({cmd})"
+            )
+
+        match = re.search(
+            r"Prepend the line '([^']+)' to each of these files: (.+?)\. Then create '([^']+)'",
+            text,
+        )
+        if match:
+            marker, files_text, review = match.groups()
+            files = re.findall(r"'([^']+)'", files_text)
+            code = (
+                "from pathlib import Path\n"
+                f"files = {[str(path) for path in files]!r}\n"
+                f"marker = {marker!r}\n"
+                "for raw in files:\n"
+                "    p = Path(raw)\n"
+                "    p.write_text(marker + '\\n' + p.read_text())\n"
+                f"review = Path({review!r})\n"
+                "review.parent.mkdir(parents=True, exist_ok=True)\n"
+                "review.write_text('\\n'.join(Path(raw).name for raw in files) + '\\n')\n"
+            )
+            cmd = f"{self._mock_python_exec_cmd(code)} && cat {shlex.quote(review)}"
+            return (
+                "Thought: I need to prepend the review marker to all files and write the review list.\n"
+                f"Action: bash({cmd})"
+            )
+
+        match = re.search(
+            r"Fix script '([^']+)' so it prints 'OK', then write a fix summary to '([^']+)'",
+            text,
+        )
+        if match:
+            script, fix = match.groups()
+            cmd = (
+                f"mkdir -p {self._mock_parent_dir(fix)} && "
+                f"perl -0pi -e 's/compute\\(\"bad\"\\)/compute(5)/' {shlex.quote(script)} && "
+                f"echo 'Changed compute input to integer 5.' > {shlex.quote(fix)} && "
+                f"python3 {shlex.quote(script)}"
+            )
+            return (
+                "Thought: I need to fix the bad compute input and document the fix.\n"
+                f"Action: bash({cmd})"
+            )
+
+        match = re.search(
+            r"Initialize a git repository, create file '([^']+)' with content '([^']+)'.*branch '([^']+)'.*file '([^']+)' with 'print\((\d+)\)'",
+            text,
+        )
+        if match:
+            readme, title, branch, feature, number = match.groups()
+            cmd = (
+                f"printf '%s\\n' {shlex.quote(title)} > {shlex.quote(readme)} && "
+                f"git add {shlex.quote(readme)} && git commit -m 'Initial commit' && "
+                f"git switch -c {shlex.quote(branch)} && "
+                f"printf 'print({number})\\n' > {shlex.quote(feature)} && "
+                f"git add {shlex.quote(feature)} && git commit -m 'Add feature' && "
+                "git switch main && git merge "
+                f"{shlex.quote(branch)}"
+            )
+            return (
+                "Thought: I need two commits on a feature branch and then merge back to main.\n"
+                f"Action: bash({cmd})"
+            )
+
+        match = re.search(
+            r"Run 'python3 -m pytest tests/'.*write the pytest summary to '([^']+)'",
+            text,
+        )
+        if match:
+            report = match.group(1)
+            cmd = (
+                f"mkdir -p {self._mock_parent_dir(report)} && "
+                f"python3 -m pytest tests/ -q > {shlex.quote(report)} && "
+                f"cat {shlex.quote(report)}"
+            )
+            return (
+                "Thought: I need to run the test suite and save the pytest summary.\n"
+                f"Action: bash({cmd})"
+            )
+
+        match = re.search(
+            r"Set up a data pipeline: create '([^']+)'.*write script '([^']+)'.*into '([^']+)'.*create '([^']+)'",
+            text,
+        )
+        if match:
+            source, script, output, pipeline = match.groups()
+            script_code = (
+                "from pathlib import Path\n"
+                f"Path({output!r}).parent.mkdir(parents=True, exist_ok=True)\n"
+                f"Path({output!r}).write_text('value\\n2\\n4\\n6\\n8\\n10\\n')\n"
+            )
+            code = (
+                "from pathlib import Path\n"
+                f"Path({source!r}).parent.mkdir(parents=True, exist_ok=True)\n"
+                f"Path({output!r}).parent.mkdir(parents=True, exist_ok=True)\n"
+                f"Path({source!r}).write_text('value\\n1\\n2\\n3\\n4\\n5\\n')\n"
+                f"Path({script!r}).write_text({script_code!r})\n"
+                f"exec(compile({script_code!r}, {script!r}, 'exec'))\n"
+                f"Path({pipeline!r}).write_text('#!/bin/bash\\npython3 {script}\\n')\n"
+                f"Path({pipeline!r}).chmod(0o755)\n"
+            )
+            cmd = (
+                f"{self._mock_python_exec_cmd(code)} && test -f {shlex.quote(output)}"
+            )
+            return (
+                "Thought: I need to create the input, processor, output, and rerun script.\n"
+                f"Action: bash({cmd})"
+            )
+
+        return ""
+
+    def _mock_parent_dir(self, path: str) -> str:
+        parent = Path(path).parent.as_posix()
+        return shlex.quote(parent if parent != "." else ".")
+
+    def _mock_python_exec_cmd(self, code: str) -> str:
+        return "python3 -c " + shlex.quote(f"exec({code!r})")
 
     # ------------------------------------------------------------------
 
