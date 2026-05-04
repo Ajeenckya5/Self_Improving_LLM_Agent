@@ -259,17 +259,135 @@ class LLMClient:
         if "numbered list" in last_user.lower() or "generate a plan" in last_user.lower():
             return "1. Identify the target\n2. Perform the action\n3. Verify the result\n4. Report completion"
 
-        # Default ReAct mock
+        # Default ReAct mock. For generated OS benchmark tasks, return a
+        # deterministic one-shot action so mock runs test the agent/tool loop
+        # instead of the old placeholder echo command.
         if "observation:" in last_user.lower():
             return (
                 "Thought: The previous action completed. I should verify the result and finish.\n"
                 "Action: finish(Task completed successfully)"
             )
 
+        task_description = self._extract_mock_task_description(messages)
+        task_action = self._mock_os_task_action(task_description)
+        if task_action:
+            return task_action
+
         return (
             "Thought: I need to analyze the task and take the first step.\n"
             "Action: bash(echo 'Starting task execution')"
         )
+
+    def _extract_mock_task_description(self, messages: List[Dict[str, str]]) -> str:
+        """Find the original task text in a mock conversation."""
+        for message in messages:
+            if message.get("role") != "user":
+                continue
+            content = message.get("content", "")
+            task_idx = content.lower().find("task:")
+            if task_idx == -1:
+                continue
+            task_text = content[task_idx + len("task:"):].strip()
+            for marker in ("\n\nbegin.", "\n\nstart by", "\navailable tools:"):
+                marker_idx = task_text.lower().find(marker)
+                if marker_idx != -1:
+                    task_text = task_text[:marker_idx].strip()
+            return task_text
+        return ""
+
+    def _mock_os_task_action(self, task_description: str) -> str:
+        """Return task-aware mock actions for the generated OS benchmark."""
+        desc = task_description.lower()
+        if not desc:
+            return ""
+
+        if "file named 'run.sh'" in desc or "make it executable" in desc:
+            return (
+                "Thought: I need to create the script, make it executable, and run it.\n"
+                "Action: bash(printf '#!/bin/bash\\necho hello\\n' > run.sh && chmod +x run.sh && ./run.sh)"
+            )
+
+        if "count the number of lines" in desc and "result.txt" in desc:
+            return (
+                "Thought: I can count data.txt lines and write only the integer result.\n"
+                "Action: bash(python3 -c \"from pathlib import Path; "
+                "Path('result.txt').write_text(str(len(Path('data.txt').read_text().splitlines())))\" && cat result.txt)"
+            )
+
+        if "find the file named" in desc and "read its content" in desc:
+            return (
+                "Thought: I should locate the requested file and print its contents.\n"
+                "Action: bash(find . -name 'secret*.txt' -type f -print -exec cat {} \\;)"
+            )
+
+        if "directory structure" in desc and "project/src" in desc:
+            return (
+                "Thought: I need to create all requested project directories and placeholders.\n"
+                "Action: bash(mkdir -p project/src project/tests project/docs && "
+                "touch project/src/.gitkeep project/tests/.gitkeep project/docs/.gitkeep && "
+                "find project -maxdepth 2 -type d | sort)"
+            )
+
+        if "move all .txt files" in desc and "archive/manifest.txt" in desc:
+            return (
+                "Thought: I need to move inbox text files and record the archive manifest.\n"
+                "Action: bash(mkdir -p archive && for f in inbox/*.txt; do [ -e \"$f\" ] && mv \"$f\" archive/; done; "
+                "for f in archive/*.txt; do basename \"$f\"; done | sort > archive/manifest.txt; cat archive/manifest.txt)"
+            )
+
+        if "replace all occurrences of 'debug=false'" in desc:
+            return (
+                "Thought: I need to replace every DEBUG=false flag in config.ini.\n"
+                "Action: bash(python3 -c \"from pathlib import Path; p=Path('config.ini'); "
+                "p.write_text(p.read_text().replace('DEBUG=false','DEBUG=true'))\" && cat config.ini)"
+            )
+
+        if "update the 'host' field" in desc and "app.conf.bak" in desc:
+            return (
+                "Thought: I need to back up app.conf and update the host and port fields.\n"
+                "Action: bash(cp app.conf app.conf.bak && python3 -c \"from pathlib import Path; p=Path('app.conf'); "
+                "s=p.read_text().replace('host=localhost','host=127.0.0.1').replace('port=3000','port=8080'); "
+                "p.write_text(s)\" && cat app.conf)"
+            )
+
+        if "add the line '# reviewed'" in desc and "src/review.md" in desc:
+            return (
+                "Thought: I need to prepend the review marker to each module and write the review list.\n"
+                "Action: bash(python3 -c \"from pathlib import Path; files=[Path('src/module_a.py'),Path('src/module_b.py'),Path('src/module_c.py')]; "
+                "[p.write_text('# reviewed\\n'+p.read_text()) for p in files]; "
+                "Path('src/REVIEW.md').write_text('\\n'.join(p.name for p in files)+'\\n')\" && cat src/REVIEW.md)"
+            )
+
+        if "compute.py" in desc and "outputs 'ok'" in desc:
+            return (
+                "Thought: I need to fix compute.py by passing an integer and document the fix.\n"
+                "Action: bash(perl -0pi -e 's/compute\\(\"hello\"\\)/compute(5)/' compute.py && "
+                "echo 'Changed compute input to integer 5.' > fix.txt && python3 compute.py)"
+            )
+
+        if "initialize a git repository" in desc and "feature.py" in desc:
+            return (
+                "Thought: I need to create two commits, use a feature branch, and merge it to main.\n"
+                "Action: bash(printf '# My Project\\n' > README.md && git add README.md && git commit -m 'Initial commit' && "
+                "git switch -c feature && printf 'print(1)\\n' > feature.py && git add feature.py && "
+                "git commit -m 'Add feature' && git switch main && git merge feature)"
+            )
+
+        if "broken test suite" in desc and "test_report.txt" in desc:
+            return (
+                "Thought: I should run the tests and save the passing report.\n"
+                "Action: bash(python3 -m pytest tests/ -q > test_report.txt && cat test_report.txt)"
+            )
+
+        if "data processing pipeline" in desc and "pipeline.sh" in desc:
+            return (
+                "Thought: I need to create the input, processor, output, and runnable pipeline script.\n"
+                "Action: bash(mkdir -p data/raw data/processed && printf 'value\\n1\\n2\\n3\\n4\\n5\\n' > data/raw/input.csv && "
+                "printf 'from pathlib import Path\\nPath(\"data/processed/output.csv\").write_text(\"value\\\\n2\\\\n4\\\\n6\\\\n8\\\\n10\\\\n\")\\n' > process.py && "
+                "python3 process.py && printf '#!/bin/bash\\npython3 process.py\\n' > pipeline.sh && chmod +x pipeline.sh && test -f data/processed/output.csv)"
+            )
+
+        return ""
 
     # ------------------------------------------------------------------
 

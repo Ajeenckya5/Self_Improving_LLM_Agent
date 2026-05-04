@@ -114,7 +114,7 @@ class OSEnvironment:
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=15,
+                timeout=30,
                 cwd=str(self._sandbox),
                 env={**os.environ, "HOME": self._tmpdir, "SANDBOX": self._tmpdir},
             )
@@ -172,7 +172,7 @@ class OSEnvironment:
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=30,
                 cwd=str(self._sandbox),
                 env={**os.environ, "HOME": self._tmpdir, "SANDBOX": self._tmpdir},
             )
@@ -211,6 +211,7 @@ def generate_os_tasks(
             tmpl = templates[i % len(templates)]
             suffix = f"_{i}"
             task_data = tmpl(task_id, suffix)
+            task_data.horizon = horizon
             env = OSEnvironment(task_data)
             task_dict = task_data.to_dict()
             task_dict["env"] = env
