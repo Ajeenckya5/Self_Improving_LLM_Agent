@@ -4,6 +4,7 @@ Self-Improving LLM Agent — unified entry point.
 Commands:
   python main.py run             Run controlled task experiment (filesystem + database)
   python main.py agentbench      Run AgentBench OS experiment
+  python main.py terminalbench   Run Terminal-Bench with the custom agent adapter
   python main.py ablation        Run ablation study
   python main.py member2-eval    Evaluate Member 2 failure/strategy prompts
   python main.py member2-ablation Run Member 2 prompt ablations
@@ -162,6 +163,36 @@ def cmd_agentbench(args: argparse.Namespace) -> None:
     subprocess.run(cmd, check=True)
 
 
+def cmd_terminalbench(args: argparse.Namespace) -> None:
+    """Run Terminal-Bench with this project's custom agent adapter."""
+    import subprocess
+    cmd = [sys.executable, "-m", "self_improving_agent.experiments.run_terminal_bench"]
+    cmd += ["--dataset", args.dataset]
+    for task_id in args.task_id or []:
+        cmd += ["--task-id", task_id]
+    if args.n_tasks is not None:
+        cmd += ["--n-tasks", str(args.n_tasks)]
+    cmd += ["--n-concurrent", str(args.n_concurrent)]
+    cmd += ["--n-attempts", str(args.n_attempts)]
+    cmd += ["--output", args.output]
+    if args.run_id:
+        cmd += ["--run-id", args.run_id]
+    if args.profile:
+        cmd += ["--profile", args.profile]
+    cmd += ["--max-steps", str(args.max_steps)]
+    cmd += ["--command-timeout-sec", str(args.command_timeout_sec)]
+    cmd += ["--log-level", args.log_level]
+    if args.no_rebuild:
+        cmd.append("--no-rebuild")
+    if args.no_cleanup:
+        cmd.append("--no-cleanup")
+    if args.skip_docker_check:
+        cmd.append("--skip-docker-check")
+    if args.print_command:
+        cmd.append("--print-command")
+    subprocess.run(cmd, check=True)
+
+
 def cmd_ablation(args: argparse.Namespace) -> None:
     """Run ablation study."""
     import subprocess
@@ -236,6 +267,24 @@ def build_parser() -> argparse.ArgumentParser:
     ab_p.add_argument("--n-tasks", type=int, default=None)
     ab_p.add_argument("--dry-run", action="store_true")
 
+    # --- terminalbench ---
+    tb_p = sub.add_parser("terminalbench", help="Run Terminal-Bench")
+    tb_p.add_argument("--dataset", default="terminal-bench-core==0.1.1")
+    tb_p.add_argument("--task-id", action="append", default=[])
+    tb_p.add_argument("--n-tasks", type=int, default=None)
+    tb_p.add_argument("--n-concurrent", type=int, default=1)
+    tb_p.add_argument("--n-attempts", type=int, default=1)
+    tb_p.add_argument("--output", default="results/terminal_bench")
+    tb_p.add_argument("--run-id", default=None)
+    tb_p.add_argument("--profile", default=None, help="Model profile: xai | haiku | groq | ollama")
+    tb_p.add_argument("--max-steps", type=int, default=50)
+    tb_p.add_argument("--command-timeout-sec", type=float, default=180.0)
+    tb_p.add_argument("--log-level", default="info")
+    tb_p.add_argument("--no-rebuild", action="store_true")
+    tb_p.add_argument("--no-cleanup", action="store_true")
+    tb_p.add_argument("--skip-docker-check", action="store_true")
+    tb_p.add_argument("--print-command", action="store_true")
+
     # --- ablation ---
     abl_p = sub.add_parser("ablation", help="Run ablation study")
     abl_p.add_argument("--horizon", type=int, default=None)
@@ -269,6 +318,8 @@ def main() -> None:
         cmd_analyze(args)
     elif args.cmd == "agentbench":
         cmd_agentbench(args)
+    elif args.cmd == "terminalbench":
+        cmd_terminalbench(args)
     elif args.cmd == "ablation":
         cmd_ablation(args)
     elif args.cmd == "member2-eval":
