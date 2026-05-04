@@ -2,6 +2,7 @@
 .env
 
 # Python
+.venv/
 *.pyc
 __pycache__/
 *.egg-info/
@@ -14,8 +15,10 @@ build/
 sandbox/
 traces/
 results/
+results_large/
 chroma_db/
 *.db
+*.pt
 
 # macOS
 .DS_Store
