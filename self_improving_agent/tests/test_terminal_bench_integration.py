@@ -9,6 +9,7 @@ from typing import Any
 from terminal_bench.agents.failure_mode import FailureMode
 
 from ..experiments.run_terminal_bench import AGENT_IMPORT_PATH, build_tb_command
+from ..integrations.harbor_agent import SelfImprovingHarborAgent
 from ..integrations.terminal_bench_agent import SelfImprovingTerminalBenchAgent
 
 
@@ -123,3 +124,54 @@ def test_terminal_bench_agent_executes_bash_action(
 
     assert result.failure_mode == FailureMode.NONE
     assert session.commands == [["touch done.txt", "Enter"]]
+
+
+def test_harbor_agent_executes_bash_action(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from harbor.environments.base import ExecResult
+    from harbor.models.agent.context import AgentContext
+    import yaml
+
+    class FakeHarborEnvironment:
+        def __init__(self):
+            self.commands: list[str] = []
+
+        async def exec(
+            self,
+            command: str,
+            cwd: str | None = None,
+            env: dict[str, str] | None = None,
+            timeout_sec: int | None = None,
+            user: str | int | None = None,
+        ) -> ExecResult:
+            self.commands.append(command)
+            return ExecResult(stdout="command completed", stderr="", return_code=0)
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(_config(tmp_path)), encoding="utf-8")
+    monkeypatch.setenv("MOCK_LLM", "1")
+
+    agent = SelfImprovingHarborAgent(
+        logs_dir=tmp_path / "logs",
+        config_path=str(config_path),
+        max_steps=3,
+        command_timeout_sec=5,
+    )
+    agent._llm = FakeLLMClient(
+        [
+            "Thought: create the marker file\nAction: bash(touch done.txt)",
+            "Thought: verified\nAction: finish(done)",
+        ]
+    )
+    env = FakeHarborEnvironment()
+    context = AgentContext()
+
+    import asyncio
+
+    asyncio.run(agent.run("Create done.txt", env, context))  # type: ignore[arg-type]
+
+    assert env.commands == ["touch done.txt"]
+    assert context.metadata is not None
+    assert context.metadata["completed"] is True
