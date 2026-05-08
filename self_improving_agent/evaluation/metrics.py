@@ -193,8 +193,11 @@ def plot_cumulative_success(
     fig, ax = plt.subplots(figsize=(8, 5))
 
     for condition, df in results.items():
-        # Sort consistently; compute cumulative rate directly per condition
-        sorted_df = df.sort_values(["attempt", "task_id"]).reset_index(drop=True)
+        if df is None or len(df) == 0 or "success" not in df.columns:
+            continue
+        # Sort consistently when attempt/task_id are present; otherwise keep insertion order.
+        sort_keys = [c for c in ("attempt", "task_id") if c in df.columns]
+        sorted_df = df.sort_values(sort_keys).reset_index(drop=True) if sort_keys else df.reset_index(drop=True)
         cumrate = sorted_df["success"].cumsum() / (sorted_df.index + 1)
         ax.plot(sorted_df.index + 1, cumrate.values, label=condition)
 
