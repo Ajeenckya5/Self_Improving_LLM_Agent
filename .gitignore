@@ -4,5 +4,7 @@ chroma_db/
 sandbox/
 traces/
 results/
+models/
+data/*.jsonl
 *.pyc
 __pycache__/

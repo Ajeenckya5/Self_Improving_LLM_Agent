@@ -1,0 +1,11 @@
+# Optional dependencies for the Grok teacher -> QLoRA student pipeline.
+# The base benchmark can run with requirements.txt; QLoRA training needs
+# a CUDA-capable environment for bitsandbytes 4-bit quantization.
+
+transformers>=4.40.0
+peft>=0.10.0
+trl>=0.8.0
+bitsandbytes>=0.43.0
+accelerate>=0.28.0
+datasets>=2.18.0
+torch>=2.1.0

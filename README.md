@@ -17,6 +17,50 @@ pip install -r requirements.txt
 export OPENAI_API_KEY=your_key
 ```
 
+## Grok Teacher -> QLoRA Student Distillation
+
+The distillation pipeline replaces repeated teacher-model failure analysis
+with a local LoRA adapter:
+
+```text
+failed traces -> Grok 4 teacher labels -> instruction JSONL
+             -> QLoRA LLaMA-3.2-1B student -> local failure analyzer
+```
+
+Install the optional training dependencies in a CUDA-capable environment:
+
+```bash
+pip install -r requirements-distillation.txt
+```
+
+Generate teacher labels from failed traces:
+
+```bash
+export XAI_API_KEY=your_xai_key
+python -m distillation.grok_teacher \
+  --traces-dir traces \
+  --out data/distill_train.jsonl
+```
+
+Train the QLoRA adapter:
+
+```bash
+python -m distillation.qlora_trainer \
+  --data data/distill_train.jsonl \
+  --output models/failure_analyzer_lora \
+  --epochs 3
+```
+
+Route failure analysis through the local student when the adapter exists:
+
+```bash
+export USE_STUDENT_ANALYZER=1
+python main.py run
+```
+
+The runtime falls back to the existing `FailureAnalyzer` if the student
+adapter is missing or disabled.
+
 ## Run Experiments
 
 ```bash

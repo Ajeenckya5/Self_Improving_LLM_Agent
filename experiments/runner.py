@@ -15,6 +15,12 @@ from failure_analysis.analyzer import FailureAnalyzer
 from strategy_memory.store import StrategyMemory
 from .metrics import ExperimentMetrics
 
+try:
+    from config import USE_STUDENT_ANALYZER, STUDENT_ADAPTER_PATH
+except ImportError:
+    USE_STUDENT_ANALYZER = False
+    STUDENT_ADAPTER_PATH = None
+
 
 class ExperimentRunner:
     """Runs experiments comparing baseline and strategy-enhanced agents."""
@@ -81,8 +87,13 @@ class ExperimentRunner:
             trace_logger.save_trace(result.trace)
 
         # On failure: analyze and store strategy
+        # Use QLoRA student model if available, else fall back to gpt-4o-mini
         if not success and result.trace:
-            analyzer = FailureAnalyzer()
+            if USE_STUDENT_ANALYZER and STUDENT_ADAPTER_PATH and STUDENT_ADAPTER_PATH.exists():
+                from distillation.student_analyzer import StudentFailureAnalyzer
+                analyzer = StudentFailureAnalyzer(adapter_path=STUDENT_ADAPTER_PATH)
+            else:
+                analyzer = FailureAnalyzer()
             analysis = analyzer.analyze(result.trace, task.description)
             self.strategy_memory.add(
                 task_id=task.task_id,
